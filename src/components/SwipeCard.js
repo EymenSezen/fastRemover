@@ -1,22 +1,15 @@
-import React, { useCallback } from 'react';
+import React, { useRef, useCallback, useEffect } from 'react';
 import {
   View,
   Image,
   Text,
   StyleSheet,
   Dimensions,
+  Animated,
+  PanResponder,
   Platform,
 } from 'react-native';
-import { Gesture, GestureDetector } from 'react-native-gesture-handler';
-import Animated, {
-  useSharedValue,
-  useAnimatedStyle,
-  withSpring,
-  withTiming,
-  runOnJS,
-  interpolate,
-  Extrapolation,
-} from 'react-native-reanimated';
+import { Video, ResizeMode } from 'expo-av';
 import * as Haptics from 'expo-haptics';
 import { COLORS, SHADOWS } from '../constants/theme';
 
@@ -26,185 +19,227 @@ const CARD_HEIGHT = SCREEN_HEIGHT * 0.55;
 const SWIPE_THRESHOLD = SCREEN_WIDTH * 0.3;
 
 export default function SwipeCard({ asset, nextAsset, onSwipeLeft, onSwipeRight }) {
-  const translateX = useSharedValue(0);
-  const translateY = useSharedValue(0);
-  const cardScale = useSharedValue(1);
+  // Always-current callback refs — fixes stale closure bug with PanResponder
+  const onSwipeLeftRef = useRef(onSwipeLeft);
+  const onSwipeRightRef = useRef(onSwipeRight);
+  useEffect(() => {
+    onSwipeLeftRef.current = onSwipeLeft;
+    onSwipeRightRef.current = onSwipeRight;
+  }, [onSwipeLeft, onSwipeRight]);
 
-  const triggerHaptic = useCallback(() => {
+  const position = useRef(new Animated.ValueXY()).current;
+  const cardScale = useRef(new Animated.Value(1)).current;
+  const nextCardScale = useRef(new Animated.Value(0.92)).current;
+  const nextCardOpacity = useRef(new Animated.Value(0.5)).current;
+  const isAnimating = useRef(false);
+
+  const triggerHaptic = () => {
     if (Platform.OS !== 'web') {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     }
-  }, []);
+  };
 
-  const handleSwipeComplete = useCallback(
-    (direction) => {
-      triggerHaptic();
-      if (direction === 'left') {
-        onSwipeLeft();
+  const resetPosition = () => {
+    isAnimating.current = false;
+    Animated.parallel([
+      Animated.spring(position, { toValue: { x: 0, y: 0 }, useNativeDriver: false }),
+      Animated.spring(cardScale, { toValue: 1, useNativeDriver: false }),
+      Animated.spring(nextCardScale, { toValue: 0.92, useNativeDriver: false }),
+      Animated.spring(nextCardOpacity, { toValue: 0.5, useNativeDriver: false }),
+    ]).start();
+  };
+
+  const swipeOut = useCallback((direction) => {
+    if (isAnimating.current) return;
+    isAnimating.current = true;
+
+    const targetX = direction === 'right' ? SCREEN_WIDTH * 1.5 : -SCREEN_WIDTH * 1.5;
+    triggerHaptic();
+
+    Animated.timing(position, {
+      toValue: { x: targetX, y: 0 },
+      duration: 280,
+      useNativeDriver: false,
+    }).start(() => {
+      // Reset animated values
+      position.setValue({ x: 0, y: 0 });
+      cardScale.setValue(1);
+      nextCardScale.setValue(0.92);
+      nextCardOpacity.setValue(0.5);
+      isAnimating.current = false;
+
+      // Use refs — always calls the latest version of the callback
+      if (direction === 'right') {
+        onSwipeRightRef.current?.();
       } else {
-        onSwipeRight();
-      }
-    },
-    [onSwipeLeft, onSwipeRight, triggerHaptic]
-  );
-
-  const resetCard = useCallback(() => {
-    translateX.value = withSpring(0, { damping: 15, stiffness: 150 });
-    translateY.value = withSpring(0, { damping: 15, stiffness: 150 });
-    cardScale.value = withSpring(1, { damping: 15, stiffness: 150 });
-  }, []);
-
-  const pan = Gesture.Pan()
-    .onBegin(() => {
-      cardScale.value = withSpring(0.97, { damping: 15, stiffness: 200 });
-    })
-    .onUpdate((event) => {
-      translateX.value = event.translationX;
-      translateY.value = event.translationY * 0.3; // Restrict vertical movement
-    })
-    .onEnd((event) => {
-      const velocityThreshold = 500;
-      const shouldSwipe =
-        Math.abs(translateX.value) > SWIPE_THRESHOLD ||
-        Math.abs(event.velocityX) > velocityThreshold;
-
-      if (shouldSwipe) {
-        const direction = translateX.value > 0 ? 'right' : 'left';
-        const targetX = direction === 'right' ? SCREEN_WIDTH * 1.5 : -SCREEN_WIDTH * 1.5;
-
-        translateX.value = withTiming(targetX, { duration: 300 }, () => {
-          runOnJS(handleSwipeComplete)(direction);
-          // Reset for next card
-          translateX.value = 0;
-          translateY.value = 0;
-          cardScale.value = 1;
-        });
-      } else {
-        runOnJS(resetCard)();
+        onSwipeLeftRef.current?.();
       }
     });
+  }, [position, cardScale, nextCardScale, nextCardOpacity]);
 
-  // Card animation
-  const cardAnimatedStyle = useAnimatedStyle(() => {
-    const rotation = interpolate(
-      translateX.value,
-      [-SCREEN_WIDTH, 0, SCREEN_WIDTH],
-      [-25, 0, 25],
-      Extrapolation.CLAMP
-    );
+  const swipeOutRef = useRef(swipeOut);
+  useEffect(() => {
+    swipeOutRef.current = swipeOut;
+  }, [swipeOut]);
 
-    return {
-      transform: [
-        { translateX: translateX.value },
-        { translateY: translateY.value },
-        { rotate: `${rotation}deg` },
-        { scale: cardScale.value },
-      ],
-    };
-  });
+  const panResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => !isAnimating.current,
+      onMoveShouldSetPanResponder: (_, g) =>
+        !isAnimating.current && Math.abs(g.dx) > 8,
 
-  // Keep overlay (right swipe)
-  const keepOverlayStyle = useAnimatedStyle(() => {
-    const opacity = interpolate(
-      translateX.value,
-      [0, SWIPE_THRESHOLD],
-      [0, 1],
-      Extrapolation.CLAMP
-    );
-    return { opacity };
-  });
+      onPanResponderGrant: () => {
+        Animated.spring(cardScale, {
+          toValue: 0.97,
+          useNativeDriver: false,
+        }).start();
+      },
 
-  // Delete overlay (left swipe)
-  const deleteOverlayStyle = useAnimatedStyle(() => {
-    const opacity = interpolate(
-      translateX.value,
-      [-SWIPE_THRESHOLD, 0],
-      [1, 0],
-      Extrapolation.CLAMP
-    );
-    return { opacity };
-  });
+      onPanResponderMove: (_, g) => {
+        if (isAnimating.current) return;
+        position.setValue({ x: g.dx, y: g.dy * 0.25 });
 
-  // Next card scale animation
-  const nextCardStyle = useAnimatedStyle(() => {
-    const scale = interpolate(
-      Math.abs(translateX.value),
-      [0, SWIPE_THRESHOLD],
-      [0.92, 1],
-      Extrapolation.CLAMP
-    );
-    const opacity = interpolate(
-      Math.abs(translateX.value),
-      [0, SWIPE_THRESHOLD],
-      [0.5, 1],
-      Extrapolation.CLAMP
-    );
-    return {
-      transform: [{ scale }],
-      opacity,
-    };
-  });
+        const progress = Math.min(Math.abs(g.dx) / SWIPE_THRESHOLD, 1);
+        nextCardScale.setValue(0.92 + 0.08 * progress);
+        nextCardOpacity.setValue(0.5 + 0.5 * progress);
+      },
+
+      onPanResponderRelease: (_, g) => {
+        if (isAnimating.current) return;
+        const shouldSwipe =
+          Math.abs(g.dx) > SWIPE_THRESHOLD || Math.abs(g.vx) > 0.8;
+
+        if (shouldSwipe) {
+          // Use ref to always call the latest swipeOut
+          swipeOutRef.current(g.dx > 0 ? 'right' : 'left');
+        } else {
+          resetPosition();
+        }
+      },
+
+      onPanResponderTerminate: () => {
+        resetPosition();
+      },
+    })
+  ).current;
 
   if (!asset) return null;
+
+  const rotate = position.x.interpolate({
+    inputRange: [-SCREEN_WIDTH, 0, SCREEN_WIDTH],
+    outputRange: ['-25deg', '0deg', '25deg'],
+    extrapolate: 'clamp',
+  });
+
+  const keepOpacity = position.x.interpolate({
+    inputRange: [0, SWIPE_THRESHOLD],
+    outputRange: [0, 1],
+    extrapolate: 'clamp',
+  });
+
+  const deleteOpacity = position.x.interpolate({
+    inputRange: [-SWIPE_THRESHOLD, 0],
+    outputRange: [1, 0],
+    extrapolate: 'clamp',
+  });
 
   return (
     <View style={styles.container}>
       {/* Next card (background) */}
       {nextAsset && (
-        <Animated.View style={[styles.card, styles.nextCard, nextCardStyle]}>
-          <Image
-            source={{ uri: nextAsset.uri }}
-            style={styles.cardImage}
-            resizeMode="cover"
-          />
+        <Animated.View
+          style={[
+            styles.card,
+            styles.nextCard,
+            { transform: [{ scale: nextCardScale }], opacity: nextCardOpacity },
+          ]}
+        >
+          {nextAsset.mediaType === 'video' ? (
+            <Video
+              source={{ uri: nextAsset.uri }}
+              style={styles.cardImage}
+              resizeMode={ResizeMode.COVER}
+              isMuted
+              shouldPlay={false}
+            />
+          ) : (
+            <Image
+              source={{ uri: nextAsset.uri }}
+              style={styles.cardImage}
+              resizeMode="cover"
+            />
+          )}
           <View style={styles.imageDarkOverlay} />
         </Animated.View>
       )}
 
-      {/* Current card (foreground) */}
-      <GestureDetector gesture={pan}>
-        <Animated.View style={[styles.card, cardAnimatedStyle]}>
+      {/* Current card */}
+      <Animated.View
+        style={[
+          styles.card,
+          {
+            transform: [
+              { translateX: position.x },
+              { translateY: position.y },
+              { rotate },
+              { scale: cardScale },
+            ],
+          },
+        ]}
+        {...panResponder.panHandlers}
+      >
+        {asset.mediaType === 'video' ? (
+          <Video
+            source={{ uri: asset.uri }}
+            style={styles.cardImage}
+            resizeMode={ResizeMode.COVER}
+            shouldPlay
+            isLooping
+            isMuted
+            useNativeControls={false}
+          />
+        ) : (
           <Image
             source={{ uri: asset.uri }}
             style={styles.cardImage}
             resizeMode="cover"
           />
+        )}
 
-          {/* Keep overlay (green) */}
-          <Animated.View style={[styles.actionOverlay, styles.keepOverlay, keepOverlayStyle]}>
-            <View style={styles.actionBadge}>
-              <Text style={styles.keepBadgeText}>TUT ✓</Text>
-            </View>
-          </Animated.View>
-
-          {/* Delete overlay (red) */}
-          <Animated.View style={[styles.actionOverlay, styles.deleteOverlay, deleteOverlayStyle]}>
-            <View style={styles.actionBadge}>
-              <Text style={styles.deleteBadgeText}>SİL ✕</Text>
-            </View>
-          </Animated.View>
-
-          {/* Media type indicator */}
-          {asset.mediaType === 'video' && (
-            <View style={styles.videoIndicator}>
-              <Text style={styles.videoIcon}>▶</Text>
-              <Text style={styles.videoDuration}>
-                {asset.duration ? `${Math.round(asset.duration)}s` : 'Video'}
-              </Text>
-            </View>
-          )}
-
-          {/* File info at bottom */}
-          <View style={styles.infoBar}>
-            <Text style={styles.filename} numberOfLines={1}>
-              {asset.filename}
-            </Text>
-            <Text style={styles.date}>
-              {new Date(asset.creationTime).toLocaleDateString('tr-TR')}
-            </Text>
+        {/* Keep overlay (green - right swipe) */}
+        <Animated.View style={[styles.actionOverlay, styles.keepOverlay, { opacity: keepOpacity }]}>
+          <View style={styles.actionBadge}>
+            <Text style={styles.keepBadgeText}>TUT ✓</Text>
           </View>
         </Animated.View>
-      </GestureDetector>
+
+        {/* Delete overlay (red - left swipe) */}
+        <Animated.View style={[styles.actionOverlay, styles.deleteOverlay, { opacity: deleteOpacity }]}>
+          <View style={styles.actionBadge}>
+            <Text style={styles.deleteBadgeText}>SİL ✕</Text>
+          </View>
+        </Animated.View>
+
+        {/* Video indicator */}
+        {asset.mediaType === 'video' && (
+          <View style={styles.videoIndicator}>
+            <Text style={styles.videoIcon}>▶</Text>
+            <Text style={styles.videoDuration}>
+              {asset.duration ? `${Math.round(asset.duration)}s` : 'Video'}
+            </Text>
+          </View>
+        )}
+
+        {/* Info bar */}
+        <View style={styles.infoBar}>
+          <Text style={styles.filename} numberOfLines={1}>
+            {asset.filename}
+          </Text>
+          <Text style={styles.date}>
+            {new Date(asset.creationTime).toLocaleDateString('tr-TR')}
+          </Text>
+        </View>
+      </Animated.View>
     </View>
   );
 }

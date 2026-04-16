@@ -5,9 +5,9 @@ import {
   ActivityIndicator,
   Text,
   Platform,
+  SafeAreaView,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
-import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import * as Haptics from 'expo-haptics';
 
 import { COLORS, SPACING, TYPOGRAPHY } from './src/constants/theme';
@@ -61,60 +61,60 @@ export default function App() {
   // Permission not granted
   if (!hasPermission) {
     return (
-      <GestureHandlerRootView style={styles.root}>
+      <View style={styles.root}>
         <StatusBar style="light" />
         <PermissionScreen onRequestPermission={() => {}} />
-      </GestureHandlerRootView>
+      </View>
     );
   }
 
   // Loading
   if (loading) {
     return (
-      <GestureHandlerRootView style={styles.root}>
+      <View style={styles.root}>
         <StatusBar style="light" />
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color={COLORS.gradientStart} />
           <Text style={styles.loadingText}>Fotoğraflar yükleniyor...</Text>
         </View>
-      </GestureHandlerRootView>
+      </View>
     );
   }
 
   // All done
   if (allDone) {
     return (
-      <GestureHandlerRootView style={styles.root}>
+      <View style={styles.root}>
         <StatusBar style="light" />
-        <View style={styles.container}>
+        <SafeAreaView style={styles.container}>
           <CompletionScreen
             deletedCount={deletedCount}
             keptCount={keptCount}
             onReset={resetAll}
           />
-        </View>
-      </GestureHandlerRootView>
+        </SafeAreaView>
+      </View>
     );
   }
 
   // No photos
   if (!currentAsset && !loading) {
     return (
-      <GestureHandlerRootView style={styles.root}>
+      <View style={styles.root}>
         <StatusBar style="light" />
         <View style={styles.emptyContainer}>
           <Text style={styles.emptyEmoji}>📭</Text>
           <Text style={styles.emptyTitle}>Galeriniz Boş</Text>
           <Text style={styles.emptySubtitle}>Temizlenecek fotoğraf bulunamadı</Text>
         </View>
-      </GestureHandlerRootView>
+      </View>
     );
   }
 
   return (
-    <GestureHandlerRootView style={styles.root}>
+    <View style={styles.root}>
       <StatusBar style="light" />
-      <View style={styles.container}>
+      <SafeAreaView style={styles.container}>
         {/* Header with undo button */}
         <Header
           deletedCount={deletedCount}
@@ -135,8 +135,8 @@ export default function App() {
 
         {/* Bottom Action Hints */}
         <ActionHints />
-      </View>
-    </GestureHandlerRootView>
+      </SafeAreaView>
+    </View>
   );
 }
 
@@ -144,11 +144,11 @@ const styles = StyleSheet.create({
   root: {
     flex: 1,
     backgroundColor: COLORS.background,
+    paddingTop: Platform.OS === 'android' ? 30 : 0,
   },
   container: {
     flex: 1,
     backgroundColor: COLORS.background,
-    paddingTop: Platform.OS === 'ios' ? 60 : 40,
   },
   loadingContainer: {
     flex: 1,

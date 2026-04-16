@@ -1,8 +1,18 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import * as MediaLibrary from 'expo-media-library';
-import { Alert } from 'react-native';
+import { Alert, Platform, Linking, AppState } from 'react-native';
 
 const PAGE_SIZE = 20;
+
+// Resolves ph:// URIs to local file:// URIs on iOS
+async function resolveUri(asset) {
+  try {
+    const info = await MediaLibrary.getAssetInfoAsync(asset);
+    return { ...asset, uri: info.localUri || info.uri || asset.uri };
+  } catch {
+    return asset;
+  }
+}
 
 export function useMediaLibrary() {
   const [assets, setAssets] = useState([]);
@@ -12,14 +22,13 @@ export function useMediaLibrary() {
   const [totalCount, setTotalCount] = useState(0);
   const [deletedCount, setDeletedCount] = useState(0);
   const [keptCount, setKeptCount] = useState(0);
-  const [trashBin, setTrashBin] = useState([]); // stack for undo
+  const [trashBin, setTrashBin] = useState([]);
   const [allDone, setAllDone] = useState(false);
 
   const endCursorRef = useRef(null);
   const hasMoreRef = useRef(true);
   const loadingMoreRef = useRef(false);
 
-  // Request permissions
   useEffect(() => {
     (async () => {
       const { status } = await MediaLibrary.requestPermissionsAsync();
@@ -35,12 +44,16 @@ export function useMediaLibrary() {
     })();
   }, []);
 
-  // Load initial assets
   useEffect(() => {
     if (hasPermission) {
       loadAssets();
     }
   }, [hasPermission]);
+
+  const resolveAssets = async (rawAssets) => {
+    const resolved = await Promise.all(rawAssets.map(resolveUri));
+    return resolved;
+  };
 
   const loadAssets = async () => {
     try {
@@ -51,7 +64,8 @@ export function useMediaLibrary() {
         sortBy: [MediaLibrary.SortBy.creationTime],
       });
 
-      setAssets(result.assets);
+      const resolved = await resolveAssets(result.assets);
+      setAssets(resolved);
       setTotalCount(result.totalCount);
       endCursorRef.current = result.endCursor;
       hasMoreRef.current = result.hasNextPage;
@@ -67,7 +81,6 @@ export function useMediaLibrary() {
 
   const loadMoreAssets = useCallback(async () => {
     if (loadingMoreRef.current || !hasMoreRef.current) return;
-
     loadingMoreRef.current = true;
     try {
       const result = await MediaLibrary.getAssetsAsync({
@@ -77,7 +90,8 @@ export function useMediaLibrary() {
         sortBy: [MediaLibrary.SortBy.creationTime],
       });
 
-      setAssets(prev => [...prev, ...result.assets]);
+      const resolved = await resolveAssets(result.assets);
+      setAssets(prev => [...prev, ...resolved]);
       endCursorRef.current = result.endCursor;
       hasMoreRef.current = result.hasNextPage;
     } catch (error) {
@@ -87,7 +101,6 @@ export function useMediaLibrary() {
     }
   }, []);
 
-  // Preload more when running low
   useEffect(() => {
     if (currentIndex >= assets.length - 3 && hasMoreRef.current) {
       loadMoreAssets();
@@ -99,9 +112,7 @@ export function useMediaLibrary() {
 
   const keepPhoto = useCallback(() => {
     if (!currentAsset) return;
-
     setKeptCount(prev => prev + 1);
-
     if (currentIndex + 1 >= assets.length && !hasMoreRef.current) {
       setAllDone(true);
     } else {
@@ -111,26 +122,16 @@ export function useMediaLibrary() {
 
   const deletePhoto = useCallback(async () => {
     if (!currentAsset) return;
-
     try {
-      // Add to trash bin for undo
       setTrashBin(prev => [...prev, currentAsset]);
-
-      // Actually delete the asset from the media library
       await MediaLibrary.deleteAssetsAsync([currentAsset.id]);
-
       setDeletedCount(prev => prev + 1);
-
-      // Remove from local array instead of incrementing index
       setAssets(prev => prev.filter((_, i) => i !== currentIndex));
-
-      // Check if we're done
       if (assets.length <= 1 && !hasMoreRef.current) {
         setAllDone(true);
       }
     } catch (error) {
       console.error('Error deleting asset:', error);
-      // If deletion fails (user cancelled), remove from trash
       setTrashBin(prev => prev.slice(0, -1));
       Alert.alert('Hata', 'Fotoğraf silinirken bir hata oluştu. Lütfen silme iznini onaylayın.');
     }
@@ -142,33 +143,93 @@ export function useMediaLibrary() {
       return false;
     }
 
-    // Pop the last deleted item
     const lastDeleted = trashBin[trashBin.length - 1];
-
-    // Note: expo-media-library doesn't have a direct "restore" API.
-    // The delete operation on iOS shows a system dialog, and once confirmed,
-    // the photo goes to the "Recently Deleted" album.
-    // We can inform the user about this.
     Alert.alert(
-      'Geri Alındı! ↩️',
-      `"${lastDeleted.filename}" son silinen fotoğrafınız.\n\niOS: Fotoğraflar > Son Silinenler klasöründen kurtarabilirsiniz.\n\nAndroid: Çöp kutusu/son silinenler klasöründen kurtarabilirsiniz.`,
+      'Son Silinen ↩️',
+      `"${lastDeleted.filename}"\n\niOS: Fotoğraflar > Son Silinenler klasöründen kurtarabilirsiniz.\nAndroid: Çöp kutusu > son silinenler klasöründen kurtarabilirsiniz.`,
       [{ text: 'Tamam' }]
     );
-
     setTrashBin(prev => prev.slice(0, -1));
     setDeletedCount(prev => Math.max(0, prev - 1));
-
     return true;
   }, [trashBin]);
 
-  const resetAll = useCallback(() => {
+  const doReset = useCallback(() => {
+    // Show loading spinner immediately — prevents flash of "Gallery Empty" screen
+    // during the gap between clearing assets and loadAssets() populating them.
+    setLoading(true);
+    setAssets([]);
     setCurrentIndex(0);
     setDeletedCount(0);
     setKeptCount(0);
     setTrashBin([]);
     setAllDone(false);
+    endCursorRef.current = null;
+    hasMoreRef.current = false;
+    loadingMoreRef.current = false;
     loadAssets();
   }, []);
+
+  const resetAll = useCallback(() => {
+    Alert.alert(
+      'Tekrar Başla',
+      'Nasıl devam etmek istersiniz?',
+      [
+        {
+          // Merges "Mevcut Erişimle Devam" + "Fotoğraf Seçimini Değiştir":
+          // On iOS, opens the photo picker so user can adjust selection (or just tap Done to keep current).
+          // On Android, just resets directly.
+          text: 'Tekrar Başla',
+          onPress: () => {
+            if (Platform.OS === 'ios') {
+              // Set up library change listener BEFORE opening picker.
+              // This is the ONLY reliable signal that iOS has committed
+              // the user's new photo selection to its database.
+              const subscription = MediaLibrary.addListener(() => {
+                subscription.remove();
+                // 500ms buffer for iOS to fully finish committing
+                setTimeout(doReset, 500);
+              });
+
+              // Fire and forget — do NOT await.
+              // On some iOS versions the promise resolves immediately
+              // (before user taps Done), which breaks await-based approaches.
+              MediaLibrary.presentPermissionsPickerAsync().catch(() => {
+                // Full access already granted — no picker shown
+                subscription.remove();
+                doReset();
+              });
+
+              // Safety cleanup: if user cancels without changing anything,
+              // remove the listener after 2 minutes to prevent memory leak.
+              setTimeout(() => subscription.remove(), 120000);
+            } else {
+              doReset();
+            }
+          },
+        },
+        {
+          // iOS cannot upgrade limited → full access programmatically.
+          // The only way is to send the user to the Settings app.
+          text: 'Tüm Galeriye Erişim Ver',
+          onPress: async () => {
+            const subscription = AppState.addEventListener('change', (nextState) => {
+              if (nextState === 'active') {
+                subscription.remove();
+                doReset();
+              }
+            });
+            await Linking.openSettings();
+          },
+        },
+        {
+          text: 'İptal',
+          style: 'cancel',
+        },
+      ],
+      { cancelable: true }
+    );
+  }, [doReset]);
 
   return {
     currentAsset,
