@@ -63,7 +63,7 @@ export default function App() {
     return (
       <View style={styles.root}>
         <StatusBar style="light" />
-        <PermissionScreen onRequestPermission={() => {}} />
+        <PermissionScreen onRequestPermission={() => { }} />
       </View>
     );
   }
