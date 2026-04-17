@@ -12,14 +12,18 @@
       "resizeMode": "contain",
       "backgroundColor": "#0a0a1a"
     },
+    "owner": "eymen23",
     "ios": {
       "supportsTablet": true,
+      "bundleIdentifier": "com.eymen23.fastremover",
       "infoPlist": {
         "NSPhotoLibraryUsageDescription": "FastRemover needs access to your photo library to display and manage your photos.",
-        "NSPhotoLibraryAddUsageDescription": "FastRemover needs permission to save photos back to your library."
+        "NSPhotoLibraryAddUsageDescription": "FastRemover needs permission to save photos back to your library.",
+        "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
+      "package": "com.eymen23.fastremover",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#0a0a1a"
