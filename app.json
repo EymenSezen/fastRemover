@@ -6,20 +6,24 @@
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
-    "newArchEnabled": false,
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
       "backgroundColor": "#0a0a1a"
     },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
     "owner": "eymen23",
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.eymen23.fastremover",
       "infoPlist": {
         "NSPhotoLibraryUsageDescription": "FastRemover needs access to your photo library to display and manage your photos.",
-        "NSPhotoLibraryAddUsageDescription": "FastRemover needs permission to save photos back to your library.",
-        "ITSAppUsesNonExemptEncryption": false
+        "NSPhotoLibraryAddUsageDescription": "FastRemover needs permission to save photos back to your library."
+      },
+      "config": {
+        "usesNonExemptEncryption": false
       }
     },
     "android": {
@@ -55,7 +59,8 @@
           "savePhotosPermission": "FastRemover needs permission to save photos.",
           "isAccessMediaLocationEnabled": true
         }
-      ]
+      ],
+      "./plugins/withFollyFix"
     ],
     "extra": {
       "eas": {
